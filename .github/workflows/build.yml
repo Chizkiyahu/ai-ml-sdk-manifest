@@ -6,15 +6,12 @@ on:
     branches:
       - main
 
-
 permissions:
   contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
-
-
 
 jobs:
   build:
@@ -27,6 +24,7 @@ jobs:
           - ubuntu-latest
           - ubuntu-24.04-arm
           - macos-15
+          - windows-latest
 
     steps:
       - name: Setup Python 3.11
@@ -34,21 +32,55 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install repo tool
+      - name: Download repo tool (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            sudo apt-get update
-            sudo apt-get install -y repo
-          elif [ "$RUNNER_OS" = "macOS" ]; then
-            brew install repo
-          fi
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1
+          git config --global core.longpaths true
+          $repoDir = "$HOME\.bin\git-repo"
+          $repoBin = "$repoDir\repo"
+          New-Item -ItemType Directory -Force -Path $repoDir | Out-Null
+          curl.exe -L "https://storage.googleapis.com/git-repo-downloads/repo" -o $repoBin
 
-      - name: Prepare workspace and repo init
+      - name: Download repo tool (macOS/Linux)
+        if: runner.os != 'Windows'
+        shell: bash
         run: |
-          repo init https://github.com/arm/ai-ml-sdk-manifest.git -b ${{ github.ref_name }}  --depth=1
+          mkdir -p "$HOME/.bin/git-repo"
+          curl -L https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/.bin/git-repo/repo"
+          chmod +x "$HOME/.bin/git-repo/repo"
 
-      - name: repo sync
-        run: repo sync
+      # Use OS-specific paths for the repo script to avoid '~' expansion issues on Windows
+      - name: Prepare workspace and repo init (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python "$HOME\.bin\git-repo\repo" init -u https://github.com/${{ github.repository }}.git --depth=1
 
-      - name: Build
+      - name: Prepare workspace and repo init (macOS/Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          python "$HOME/.bin/git-repo/repo" init -u https://github.com/${{ github.repository }}.git --depth=1
+
+      - name: repo sync (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python "$HOME\.bin\git-repo\repo" sync
+
+      - name: repo sync (macOS/Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          python "$HOME/.bin/git-repo/repo" sync
+
+      - name: Build (macOS/Linux)
+        if: runner.os != 'Windows'
         run: ./scripts/build.py
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          python scripts\build.py
